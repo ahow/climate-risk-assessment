@@ -594,12 +594,12 @@ def build_html_page():
                     statusDiv.style.background = '#d4edda';
                     statusDiv.style.color = '#155724';
                     statusDiv.innerHTML = `✅ Full sync complete!<br>
-                        <strong>Sync:</strong> ${result.sync.message}<br>
-                        <strong>Submit:</strong> ${result.submit.message}`;
+                        <strong>Sync:</strong> ${{result.sync.message}}<br>
+                        <strong>Submit:</strong> ${{result.submit.message}}`;
                 }} else {{
                     statusDiv.style.background = '#f8d7da';
                     statusDiv.style.color = '#721c24';
-                    statusDiv.innerHTML = `❌ Sync failed: ${result.sync.message}`;
+                    statusDiv.innerHTML = `❌ Sync failed: ${{result.sync.message}}`;
                 }}
                 
                 // Reload stats and jobs
