@@ -563,11 +563,11 @@ def build_html_page():
                 if (result.success) {{
                     statusDiv.style.background = '#d4edda';
                     statusDiv.style.color = '#155724';
-                    statusDiv.innerHTML = `✅ ${result.message}<br><small>Added: ${result.added}, Updated: ${result.updated}, Errors: ${result.errors}</small>`;
+                    statusDiv.innerHTML = `✅ ${{result.message}}<br><small>Added: ${{result.added}}, Updated: ${{result.updated}}, Errors: ${{result.errors}}</small>`;
                 }} else {{
                     statusDiv.style.background = '#f8d7da';
                     statusDiv.style.color = '#721c24';
-                    statusDiv.innerHTML = `❌ ${result.message}`;
+                    statusDiv.innerHTML = `❌ ${{result.message}}`;
                 }}
                 
                 // Reload stats
@@ -575,7 +575,7 @@ def build_html_page():
             }} catch (error) {{
                 statusDiv.style.background = '#f8d7da';
                 statusDiv.style.color = '#721c24';
-                statusDiv.innerHTML = `❌ Sync failed: ${error.message}`;
+                statusDiv.innerHTML = `❌ Sync failed: ${{error.message}}`;
             }}
         }}
         
@@ -608,7 +608,7 @@ def build_html_page():
             }} catch (error) {{
                 statusDiv.style.background = '#f8d7da';
                 statusDiv.style.color = '#721c24';
-                statusDiv.innerHTML = `❌ Full sync failed: ${error.message}`;
+                statusDiv.innerHTML = `❌ Full sync failed: ${{error.message}}`;
             }}
         }}
         
