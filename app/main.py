@@ -32,6 +32,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files directory
+import os
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
@@ -968,6 +974,18 @@ async def get_recent_jobs():
     except Exception as e:
         logger.error(f"Get recent jobs failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/dashboard")
+async def dashboard():
+    """Serve the visualization dashboard"""
+    try:
+        dashboard_path = os.path.join(os.path.dirname(__file__), "static", "dashboard.html")
+        with open(dashboard_path, 'r') as f:
+            html_content = f.read()
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logger.error(f"Dashboard load failed: {e}")
+        raise HTTPException(status_code=500, detail="Dashboard not available")
 
 @app.get("/health")
 async def health_check():

@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Climate Risk Assessment Dashboard</title>
+    <!-- Papa Parse library for robust CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+        
+        h1 { color: #333; font-size: 2.5em; margin-bottom: 10px; }
+        .subtitle { color: #666; font-size: 1.1em; }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 3em;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .stat-label { color: #666; font-size: 1.1em; }
+        
+        .controls {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+        
+        .search-box {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        input[type="text"] {
+            flex: 1;
+            min-width: 250px;
+            padding: 15px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 1em;
+        }
+        
+        button {
+            padding: 15px 30px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 50px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .loading-spinner {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .companies-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .company-card {
+            background: white;
+            padding: 25px;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .company-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        
+        .company-name {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .company-isin {
+            color: #888;
+            font-size: 0.9em;
+            margin-bottom: 20px;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .score-display {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .score-number {
+            font-size: 3em;
+            font-weight: bold;
+        }
+        
+        .score-label {
+            color: #666;
+            font-size: 0.95em;
+        }
+        
+        .company-meta {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .meta-tag {
+            background: #f5f5f5;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            color: #555;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+        
+        .modal-content {
+            background: white;
+            max-width: 1200px;
+            margin: 50px auto;
+            border-radius: 15px;
+            padding: 40px;
+            position: relative;
+        }
+        
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            font-size: 2.5em;
+            cursor: pointer;
+            color: #999;
+            line-height: 1;
+        }
+        
+        .modal-close:hover { color: #333; }
+        
+        .modal-header {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .modal-company-name {
+            font-size: 2.2em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 12px;
+        }
+        
+        .modal-meta { color: #666; font-size: 1.05em; }
+        
+        .overall-score-section {
+            background: linear-gradient(135deg, #f9f9f9 0%, #f0f0f0 100%);
+            padding: 35px;
+            border-radius: 12px;
+            margin-bottom: 35px;
+            text-align: center;
+        }
+        
+        .overall-score-title {
+            font-size: 1.3em;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #555;
+        }
+        
+        .overall-score-value {
+            font-size: 4em;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        
+        .measures-section-title {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 25px;
+        }
+        
+        .measure-grid { display: grid; gap: 20px; }
+        
+        .measure-card {
+            background: #fafafa;
+            padding: 25px;
+            border-radius: 12px;
+            border-left: 5px solid #667eea;
+        }
+        
+        .measure-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        
+        .measure-title {
+            font-weight: bold;
+            color: #333;
+            font-size: 1.15em;
+        }
+        
+        .measure-badges {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .measure-score {
+            background: #667eea;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 0.95em;
+        }
+        
+        .measure-confidence {
+            padding: 5px 14px;
+            border-radius: 18px;
+            font-size: 0.85em;
+            font-weight: 600;
+        }
+        
+        .confidence-high { background: #6bcf7f; color: white; }
+        .confidence-medium { background: #ffd93d; color: #333; }
+        .confidence-low { background: #ff6b6b; color: white; }
+        .confidence-unknown { background: #ccc; color: #666; }
+        
+        .measure-content { line-height: 1.7; }
+        .measure-section { margin-bottom: 15px; }
+        
+        .measure-section-label {
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 5px;
+        }
+        
+        .measure-rationale { color: #444; }
+        
+        .measure-evidence {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+            font-size: 0.93em;
+            color: #555;
+            white-space: pre-wrap;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+        
+        .measure-source { font-size: 0.88em; }
+        .measure-source a {
+            color: #667eea;
+            text-decoration: none;
+            word-break: break-all;
+        }
+        .measure-source a:hover { text-decoration: underline; }
+        
+        .error-message {
+            background: #ff6b6b;
+            color: white;
+            padding: 25px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+        
+        .filter-tabs {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .filter-tab {
+            padding: 12px 24px;
+            background: #f0f0f0;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.95em;
+        }
+        
+        .filter-tab.active {
+            background: #667eea;
+            color: white;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        
+        .empty-state-icon { font-size: 5em; margin-bottom: 20px; }
+        .empty-state-text { color: #666; font-size: 1.3em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🌍 Climate Risk Assessment Dashboard</h1>
+            <p class="subtitle">Comprehensive visualization of climate risk assessments across your portfolio</p>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value" id="totalCompanies">-</div>
+                <div class="stat-label">Companies Assessed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="avgScore">-</div>
+                <div class="stat-label">Average Score</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="highRisk">-</div>
+                <div class="stat-label">High Risk (&lt;2)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" id="lowRisk">-</div>
+                <div class="stat-label">Low Risk (&gt;4)</div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Search by company name, ISIN, sector, or country...">
+                <button onclick="loadData()">🔄 Refresh Data</button>
+                <button onclick="downloadCSV()">📥 Download CSV</button>
+            </div>
+            <div class="filter-tabs">
+                <button class="filter-tab active" data-filter="all">All Companies</button>
+                <button class="filter-tab" data-filter="high">High Risk (&lt;2)</button>
+                <button class="filter-tab" data-filter="medium">Medium Risk (2-4)</button>
+                <button class="filter-tab" data-filter="low">Low Risk (&gt;4)</button>
+            </div>
+        </div>
+
+        <div id="content"></div>
+    </div>
+
+    <div class="modal" id="companyModal">
+        <div class="modal-content">
+            <span class="modal-close" onclick="closeModal()">&times;</span>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'https://climate-risk-improved-1b8e197c19d6.herokuapp.com';
+        let allCompanies = [];
+        let currentFilter = 'all';
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadData();
+            setupEventListeners();
+        });
+
+        function setupEventListeners() {
+            document.getElementById('searchInput').addEventListener('input', (e) => {
+                filterCompanies(e.target.value);
+            });
+
+            document.querySelectorAll('.filter-tab').forEach(tab => {
+                tab.addEventListener('click', (e) => {
+                    filterByRisk(e.target.dataset.filter);
+                    document.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+                    e.target.classList.add('active');
+                });
+            });
+        }
+
+        async function loadData() {
+            const content = document.getElementById('content');
+            content.innerHTML = `
+                <div class="loading">
+                    <div class="loading-spinner"></div>
+                    <p>Loading assessment data from API...</p>
+                </div>
+            `;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/download/latest`);
+                if (!response.ok) throw new Error('Failed to fetch data');
+                
+                const csvText = await response.text();
+                const companies = await parseCSVProperly(csvText);
+                
+                allCompanies = companies;
+                updateStats(companies);
+                displayCompanies(companies);
+            } catch (error) {
+                console.error('Error:', error);
+                content.innerHTML = `
+                    <div class="error-message">
+                        <strong>Error loading data:</strong> ${error.message}
+                        <br><br>
+                        Please ensure the API is accessible and try again.
+                    </div>
+                `;
+            }
+        }
+
+        async function parseCSVProperly(csvText) {
+            return new Promise((resolve, reject) => {
+                Papa.parse(csvText, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: (results) => {
+                        const companies = results.data.map(row => {
+                            const company = {
+                                Company: row.Company || 'Unknown Company',
+                                ISIN: row.ISIN || 'No ISIN',
+                                Sector: row.Sector || '',
+                                Industry: row.Industry || '',
+                                Country: row.Country || '',
+                                Assessment_Date: row.Assessment_Date || '',
+                                Overall_Risk_Rating: row.Overall_Risk_Rating || '',
+                                measures: []
+                            };
+
+                            for (let m = 1; m <= 44; m++) {
+                                const measureNum = m.toString().padStart(2, '0');
+                                const scoreKey = `M${measureNum}_Score`;
+                                
+                                if (row[scoreKey] !== undefined) {
+                                    const score = parseFloat(row[scoreKey]) || 0;
+                                    company.measures.push({
+                                        number: measureNum,
+                                        score: score,
+                                        confidence: row[`M${measureNum}_Confidence`] || 'Unknown',
+                                        rationale: row[`M${measureNum}_Rationale`] || 'No rationale provided',
+                                        evidence: row[`M${measureNum}_Evidence`] || 'No evidence found',
+                                        source: row[`M${measureNum}_Source`] || '',
+                                        aiModel: row[`M${measureNum}_AI_Model`] || 'N/A'
+                                    });
+                                }
+                            }
+
+                            const scores = company.measures.map(m => m.score).filter(s => s > 0);
+                            company.averageScore = scores.length > 0 
+                                ? scores.reduce((a, b) => a + b, 0) / scores.length 
+                                : 0;
+
+                            return company;
+                        });
+
+                        resolve(companies);
+                    },
+                    error: (error) => reject(error)
+                });
+            });
+        }
+
+        function updateStats(companies) {
+            document.getElementById('totalCompanies').textContent = companies.length;
+            
+            const avgScore = companies.reduce((sum, c) => sum + c.averageScore, 0) / companies.length;
+            document.getElementById('avgScore').textContent = avgScore.toFixed(2);
+            
+            const highRisk = companies.filter(c => c.averageScore < 2).length;
+            document.getElementById('highRisk').textContent = highRisk;
+            
+            const lowRisk = companies.filter(c => c.averageScore > 4).length;
+            document.getElementById('lowRisk').textContent = lowRisk;
+        }
+
+        function displayCompanies(companies) {
+            const content = document.getElementById('content');
+            
+            if (companies.length === 0) {
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <div class="empty-state-text">No companies found matching your criteria</div>
+                    </div>
+                `;
+                return;
+            }
+
+            const grid = document.createElement('div');
+            grid.className = 'companies-grid';
+
+            companies.forEach(company => {
+                grid.appendChild(createCompanyCard(company));
+            });
+
+            content.innerHTML = '';
+            content.appendChild(grid);
+        }
+
+        function createCompanyCard(company) {
+            const card = document.createElement('div');
+            card.className = 'company-card';
+            card.onclick = () => showCompanyDetails(company);
+
+            const scoreColor = company.averageScore < 2 ? '#ff6b6b' : 
+                              company.averageScore < 4 ? '#ffd93d' : '#6bcf7f';
+
+            card.innerHTML = `
+                <div class="company-name">${escapeHtml(company.Company)}</div>
+                <div class="company-isin">${escapeHtml(company.ISIN)}</div>
+                <div class="score-display">
+                    <div class="score-number" style="color: ${scoreColor};">
+                        ${company.averageScore.toFixed(2)}
+                    </div>
+                    <div class="score-label">/ 5.0<br><small>Average Score</small></div>
+                </div>
+                <div class="company-meta">
+                    ${company.Sector ? `<span class="meta-tag">📊 ${escapeHtml(company.Sector)}</span>` : ''}
+                    ${company.Country ? `<span class="meta-tag">🌍 ${escapeHtml(company.Country)}</span>` : ''}
+                    ${company.Assessment_Date ? `<span class="meta-tag">📅 ${company.Assessment_Date.split(' ')[0]}</span>` : ''}
+                </div>
+            `;
+
+            return card;
+        }
+
+        function showCompanyDetails(company) {
+            const modal = document.getElementById('companyModal');
+            const modalContent = document.getElementById('modalContent');
+
+            const measuresHTML = company.measures.map(measure => {
+                const confidenceClass = measure.confidence.toLowerCase().replace(/\s/g, '-');
+                
+                return `
+                    <div class="measure-card">
+                        <div class="measure-header">
+                            <span class="measure-title">Measure ${measure.number}</span>
+                            <div class="measure-badges">
+                                <span class="measure-score">${measure.score.toFixed(1)}/5</span>
+                                <span class="measure-confidence confidence-${confidenceClass}">
+                                    ${escapeHtml(measure.confidence)}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="measure-content">
+                            <div class="measure-section">
+                                <div class="measure-section-label">Rationale:</div>
+                                <div class="measure-rationale">${escapeHtml(measure.rationale)}</div>
+                            </div>
+                            ${measure.evidence && measure.evidence !== 'No evidence found' ? `
+                                <div class="measure-section">
+                                    <div class="measure-section-label">Evidence:</div>
+                                    <div class="measure-evidence">${escapeHtml(measure.evidence)}</div>
+                                </div>
+                            ` : ''}
+                            ${measure.source ? `
+                                <div class="measure-section">
+                                    <div class="measure-section-label">Source:</div>
+                                    <div class="measure-source">
+                                        <a href="${escapeHtml(measure.source)}" target="_blank">${escapeHtml(measure.source)}</a>
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            const scoreColor = company.averageScore < 2 ? '#ff6b6b' : 
+                              company.averageScore < 4 ? '#ffd93d' : '#6bcf7f';
+
+            modalContent.innerHTML = `
+                <div class="modal-header">
+                    <div class="modal-company-name">${escapeHtml(company.Company)}</div>
+                    <div class="modal-meta">
+                        <strong>ISIN:</strong> ${escapeHtml(company.ISIN)} | 
+                        <strong>Sector:</strong> ${escapeHtml(company.Sector) || 'N/A'} | 
+                        <strong>Country:</strong> ${escapeHtml(company.Country) || 'N/A'}
+                    </div>
+                </div>
+                <div class="overall-score-section">
+                    <div class="overall-score-title">Overall Risk Score</div>
+                    <div class="overall-score-value" style="color: ${scoreColor};">
+                        ${company.averageScore.toFixed(2)} / 5.0
+                    </div>
+                    <div style="color: #666; font-size: 0.95em;">Average across ${company.measures.length} measures</div>
+                </div>
+                <h2 class="measures-section-title">Detailed Assessment - All 44 Measures</h2>
+                <div class="measure-grid">
+                    ${measuresHTML}
+                </div>
+            `;
+
+            modal.style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('companyModal').style.display = 'none';
+        }
+
+        function filterCompanies(searchTerm) {
+            const term = searchTerm.toLowerCase();
+            let filtered = allCompanies;
+
+            if (term) {
+                filtered = filtered.filter(c => 
+                    (c.Company || '').toLowerCase().includes(term) ||
+                    (c.ISIN || '').toLowerCase().includes(term) ||
+                    (c.Sector || '').toLowerCase().includes(term) ||
+                    (c.Country || '').toLowerCase().includes(term)
+                );
+            }
+
+            filtered = applyRiskFilter(filtered);
+            displayCompanies(filtered);
+        }
+
+        function filterByRisk(risk) {
+            currentFilter = risk;
+            const searchTerm = document.getElementById('searchInput').value;
+            filterCompanies(searchTerm);
+        }
+
+        function applyRiskFilter(companies) {
+            if (currentFilter === 'all') return companies;
+            if (currentFilter === 'high') return companies.filter(c => c.averageScore < 2);
+            if (currentFilter === 'medium') return companies.filter(c => c.averageScore >= 2 && c.averageScore <= 4);
+            if (currentFilter === 'low') return companies.filter(c => c.averageScore > 4);
+            return companies;
+        }
+
+        function downloadCSV() {
+            window.open(`${API_BASE_URL}/api/download/latest`, '_blank');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('companyModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+    </script>
+</body>
+</html>
