@@ -10,7 +10,7 @@ from typing import Dict, List, Tuple
 from openai import OpenAI
 from app.web_search import search_company_climate_info
 from app.database import Database
-from app.document_extraction_enhanced import extract_documents_for_company
+from app.document_extraction_v3 import extract_documents_for_company
 from app.document_extraction_simple import format_documents_for_assessment
 from app.sustainability_portal import get_priority_documents
 
@@ -148,8 +148,8 @@ class BatchedAssessmentEngine:
             
             # 2c: Extract full documents using enhanced extraction
             serpapi_key = os.getenv('SERPAPI_KEY')
-            extracted_docs = extract_documents_for_company(company_name, serpapi_key)
-            logger.info(f"Extracted {len(extracted_docs)} full documents")
+            extracted_docs = extract_documents_for_company(company_name, serpapi_key, max_documents=20)
+            logger.info(f"Extracted {len(extracted_docs)} full documents (V3 multi-pass with 20 doc limit)")
             
             # 2d: Format for assessment (use full documents if available, otherwise snippets)
             if extracted_docs:
