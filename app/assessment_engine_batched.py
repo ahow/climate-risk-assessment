@@ -8,7 +8,7 @@ import re
 import logging
 from typing import Dict, List, Tuple
 from openai import OpenAI
-from app.web_search import search_company_climate_info
+from app.brave_search import search_company_climate_info
 from app.database import Database
 from app.document_extraction_v3 import extract_documents_for_company
 from app.document_extraction_simple import format_documents_for_assessment

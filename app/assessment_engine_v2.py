@@ -8,7 +8,7 @@ import re
 import logging
 from typing import Dict, List
 from openai import OpenAI
-from app.web_search import search_company_climate_info, format_search_results
+from app.brave_search import search_company_climate_info, format_search_results
 from app.database import Database
 
 logger = logging.getLogger(__name__)
