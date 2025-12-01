@@ -119,11 +119,11 @@ def format_documents_for_assessment(documents: List[Dict]) -> str:
     
     for i, doc in enumerate(documents, 1):
         formatted += f"{'=' * 80}\n"
-        formatted += f"DOCUMENT {i}: {doc['title']}\n"
-        formatted += f"Source: {doc['url']}\n"
-        formatted += f"Type: {doc['type'].upper()}\n"
+        formatted += f"DOCUMENT {i}: {doc.get('title', 'Unknown')}\n"
+        formatted += f"Source: {doc.get('url', 'Unknown')}\n"
+        formatted += f"Type: {doc.get('type', 'unknown').upper()}\n"
         formatted += f"{'=' * 80}\n\n"
-        formatted += doc['text'][:10000]  # First 10k chars per document
+        formatted += doc.get('text', doc.get('content', ''))[:10000]  # First 10k chars per document
         formatted += "\n\n"
         
         if i >= 5:  # Limit to 5 documents
