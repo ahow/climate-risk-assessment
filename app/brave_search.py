@@ -191,6 +191,10 @@ class AdaptiveDocumentSearch:
         
         if 'web' in data and 'results' in data['web']:
             for item in data['web']['results']:
+                # Skip malformed results without URL
+                if 'url' not in item:
+                    continue
+                    
                 results.append({
                     'url': item['url'],
                     'title': item.get('title', ''),
