@@ -240,8 +240,18 @@ class AdaptiveDocumentSearch:
             return True
         
         # Check if company name appears in title or snippet
-        if company_name.lower() not in (title + snippet).lower():
-            logger.debug(f"Company name not in result: {title}")
+        # Use first significant word of company name for flexibility
+        # e.g., "Cisco Systems" -> check for "cisco"
+        company_keywords = [word.lower() for word in company_name.split() 
+                           if len(word) > 3 and word.lower() not in {'inc', 'ltd', 'corp', 'corporation', 'company', 'group'}]
+        
+        if not company_keywords:
+            # Fallback to full name if no significant keywords
+            company_keywords = [company_name.lower()]
+        
+        combined_text = (title + snippet).lower()
+        if not any(keyword in combined_text for keyword in company_keywords):
+            logger.debug(f"Company keywords {company_keywords} not in result: {title}")
             return True
         
         return False
