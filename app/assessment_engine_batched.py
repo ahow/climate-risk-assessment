@@ -139,25 +139,32 @@ class BatchedAssessmentEngine:
             logger.info(f"Retrieving documents for {company_name}...")
             
             # 2a: Web search for initial URLs
+            logger.info("[CHECKPOINT 1] Starting Brave search...")
             search_results = search_company_climate_info(company_name, max_results=25)
-            logger.info(f"Found {len(search_results)} search results")
+            logger.info(f"[CHECKPOINT 2] Found {len(search_results)} search results")
+            if search_results:
+                logger.info(f"[DEBUG] First result keys: {list(search_results[0].keys())}")
             
             # 2b: Get priority documents from sustainability portals
+            logger.info("[CHECKPOINT 3] Starting portal search...")
             portal_docs = get_priority_documents(company_name)
-            logger.info(f"Found {len(portal_docs)} portal documents")
+            logger.info(f"[CHECKPOINT 4] Found {len(portal_docs)} portal documents")
             
             # 2c: Extract full documents using enhanced extraction
+            logger.info("[CHECKPOINT 5] Starting document extraction...")
             serpapi_key = os.getenv('SERPAPI_KEY')
             extracted_docs = extract_documents_for_company(company_name, serpapi_key, max_documents=20)
-            logger.info(f"Extracted {len(extracted_docs)} full documents (V3 multi-pass with 20 doc limit)")
+            logger.info(f"[CHECKPOINT 6] Extracted {len(extracted_docs)} full documents (V3 multi-pass with 20 doc limit)")
             
             # 2d: Format for assessment (use full documents if available, otherwise snippets)
+            logger.info("[CHECKPOINT 7] Formatting search context...")
             if extracted_docs:
                 search_context = format_documents_for_assessment(extracted_docs)
-                logger.info(f"Using {len(extracted_docs)} full documents for assessment")
+                logger.info(f"[CHECKPOINT 8] Using {len(extracted_docs)} full documents for assessment")
             else:
+                logger.info("[DEBUG] Calling _format_search_with_urls...")
                 search_context = self._format_search_with_urls(search_results)
-                logger.info(f"Using search snippets (no full documents extracted)")
+                logger.info(f"[CHECKPOINT 8] Using search snippets (no full documents extracted)")
             
             # Step 3: Process each batch
             all_measures = {}
@@ -197,8 +204,13 @@ class BatchedAssessmentEngine:
             logger.info(f"✓ Batched assessment completed for {company_name} (44 measures)")
             
         except Exception as e:
-            logger.error(f"Assessment failed for {company_name}: {e}", exc_info=True)
-            self.db.update_job_status(job_id, 'failed', error_message=str(e))
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"Assessment failed for {company_name}: {e}")
+            logger.error(f"Full traceback:\n{error_trace}")
+            # Store both error message and traceback
+            error_msg = f"{type(e).__name__}: {str(e)}\n\nTraceback:\n{error_trace[:500]}"
+            self.db.update_job_status(job_id, 'failed', error_message=error_msg)
             raise
     
     def _format_search_with_urls(self, search_results: List[Dict]) -> str:
