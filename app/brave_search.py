@@ -37,12 +37,12 @@ class AdaptiveDocumentSearch:
     Uses ISIN to discover company name variations for accurate filtering.
     """
     
-    def __init__(self, brave_api_key: str = None, max_iterations: int = 10, max_documents: int = 150):
+    def __init__(self, brave_api_key: str = None, max_iterations: int = 5, max_documents: int = 150):
         self.brave_api_key = brave_api_key or os.getenv('BRAVE_API_KEY')
         if not self.brave_api_key:
             raise ValueError("BRAVE_API_KEY not provided and not found in environment")
             
-        self.max_iterations = max_iterations
+        self.max_iterations = max_iterations  # Reduced from 10 to 5 for safety
         self.max_documents = max_documents
         self.search_count = 0
         self.company_name_variations = set()
@@ -85,8 +85,8 @@ class AdaptiveDocumentSearch:
             new_urls = set(new_docs.keys())
             previously_unseen = new_urls - set(all_documents.keys())
             
-            logger.info(f"Iteration {iteration}: Found {len(new_docs)} docs, "
-                       f"{len(previously_unseen)} new (total: {len(all_documents) + len(previously_unseen)})")
+            logger.info(f"[SEARCH] Iteration {iteration}/{self.max_iterations}: Found {len(new_docs)} docs after filtering, "
+                       f"{len(previously_unseen)} new, {len(all_documents)} total so far")
             
             # Add new documents
             for url in previously_unseen:
@@ -98,7 +98,7 @@ class AdaptiveDocumentSearch:
                 
                 if consecutive_no_new_docs >= 2:
                     # No new docs for 2 iterations - we're exhausted
-                    logger.info(f"Search exhausted after {iteration} iterations")
+                    logger.info(f"[SEARCH] Exhausted: No new docs for 2 consecutive iterations. Total: {len(all_documents)} docs")
                     break
             else:
                 # Found new docs, reset counter
@@ -291,10 +291,13 @@ class AdaptiveDocumentSearch:
         Execute searches for all queries in this iteration.
         """
         all_results = {}
+        total_raw_results = 0
+        total_filtered = 0
         
         for query in queries:
             try:
                 results = self._brave_search(query, count=20)
+                total_raw_results += len(results)
                 
                 for result in results:
                     url = result['url']
@@ -305,6 +308,8 @@ class AdaptiveDocumentSearch:
                     if not self._should_filter(url, title, snippet, company_name, isin):
                         if url not in all_results:
                             all_results[url] = result
+                    else:
+                        total_filtered += 1
                 
                 self.search_count += 1
                 time.sleep(0.1)  # Small delay to be respectful
@@ -312,6 +317,7 @@ class AdaptiveDocumentSearch:
             except Exception as e:
                 logger.warning(f"Search failed for '{query[:50]}...': {e}")
         
+        logger.info(f"[FILTER] Raw results: {total_raw_results}, Filtered out: {total_filtered}, Kept: {len(all_results)}")
         return all_results
     
     def _brave_search(self, query: str, count: int = 20) -> List[Dict]:
