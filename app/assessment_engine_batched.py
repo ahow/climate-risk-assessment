@@ -13,6 +13,7 @@ from app.database import Database
 from app.document_extraction_v3 import extract_documents_for_company
 from app.document_extraction_simple import format_documents_for_assessment
 from app.sustainability_portal import get_priority_documents
+from app.document_ranker import DocumentRanker
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ class BatchedAssessmentEngine:
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=max_tokens,
-                temperature=0.3
+                temperature=0  # Maximum determinism for repeatability
             )
             
             return response.choices[0].message.content
@@ -135,27 +136,28 @@ class BatchedAssessmentEngine:
             processprompt_content = processprompt['content']
             logger.info(f"Using ProcessPrompt: {processprompt['version_name']}")
             
-            # Step 2: Comprehensive document retrieval
+            # Step 2: Document retrieval with relevance ranking
             logger.info(f"Retrieving documents for {company_name}...")
             
-            # 2a: Web search for initial URLs
-            logger.info("[CHECKPOINT 1] Starting Brave search...")
-            search_results = search_company_climate_info(company_name, isin=isin, max_results=150)
-            logger.info(f"[CHECKPOINT 2] Brave adaptive search found {len(search_results)} unique documents")
-            if search_results:
-                logger.info(f"[DEBUG] First result keys: {list(search_results[0].keys())}")
+            # 2a: Brave adaptive search (exhaustive)
+            logger.info("[CHECKPOINT 1] Starting Brave adaptive search...")
+            all_search_results = search_company_climate_info(company_name, isin=isin, max_results=150)
+            logger.info(f"[CHECKPOINT 2] Brave adaptive search found {len(all_search_results)} unique documents")
             
-            # 2b: DISABLED - Portal search disabled (results were not being used)
-            logger.info("[CHECKPOINT 3] Portal search DISABLED - not needed with Brave adaptive search")
+            # 2b: Rank documents by relevance and select top 50
+            logger.info("[CHECKPOINT 3] Ranking documents by relevance...")
+            ranker = DocumentRanker(verbose=True)
+            top_documents = ranker.rank_documents(all_search_results, top_n=50)
+            logger.info(f"[CHECKPOINT 4] Selected top {len(top_documents)} most relevant documents")
             
-            # 2c: DISABLED - SerpAPI extraction disabled to improve repeatability and save quota
-            # Using only Brave adaptive search results (80-150 documents)
-            logger.info("[CHECKPOINT 5] SerpAPI extraction DISABLED - using Brave adaptive search only")
+            # 2c: Format top documents for assessment
+            logger.info("[CHECKPOINT 5] Formatting top documents for LLM...")
+            search_context = self._format_search_with_urls(top_documents)
+            logger.info(f"[CHECKPOINT 6] PASS 1: Using {len(top_documents)} top-ranked documents for initial assessment")
             
-            # 2d: Format Brave search results for assessment
-            logger.info("[CHECKPOINT 7] Formatting Brave search results...")
-            search_context = self._format_search_with_urls(search_results)
-            logger.info(f"[CHECKPOINT 8] FINAL: Using {len(search_results)} Brave adaptive search documents for LLM assessment")
+            # Store all documents for potential Pass 2
+            self._all_documents = all_search_results
+            self._ranker = ranker
             
             # Step 3: Process each batch
             all_measures = {}
@@ -179,7 +181,59 @@ class BatchedAssessmentEngine:
                 
                 logger.info(f"✓ Batch {batch_num}/5 completed ({len(batch_measures)} measures)")
             
-            # Step 4: Calculate overall scores
+            # Step 4: Pass 2 - Retry low-confidence measures
+            logger.info("[CHECKPOINT 7] Analyzing Pass 1 results for retry candidates...")
+            retry_measures = self._identify_retry_measures(all_measures)
+            
+            if retry_measures:
+                logger.info(f"[PASS 2] Retrying {len(retry_measures)} low-confidence measures with targeted documents")
+                
+                # Group retry measures by category
+                retry_by_category = {}
+                for measure_id in retry_measures:
+                    category = self._ranker.get_measure_category(measure_id)
+                    if category not in retry_by_category:
+                        retry_by_category[category] = []
+                    retry_by_category[category].append(measure_id)
+                
+                # Process each category
+                for category, measure_ids in retry_by_category.items():
+                    logger.info(f"[PASS 2] Processing {len(measure_ids)} {category} measures")
+                    
+                    # Get targeted documents for this category
+                    targeted_docs = self._ranker.filter_for_measures(
+                        self._all_documents, 
+                        category, 
+                        top_n=20
+                    )
+                    targeted_context = self._format_search_with_urls(targeted_docs)
+                    
+                    # Build retry prompt
+                    retry_prompt = self._build_batch_prompt(
+                        company_data=company_data,
+                        processprompt=processprompt_content,
+                        web_search_results=targeted_context,
+                        measure_ids=measure_ids,
+                        batch_num=99  # Special batch number for retry
+                    )
+                    
+                    # Call LLM for retry
+                    retry_response = self.call_deepseek(retry_prompt, max_tokens=8000)
+                    retry_results = self._parse_batch_response(retry_response, measure_ids)
+                    
+                    # Update measures with retry results (only if improved)
+                    for measure_id, retry_data in retry_results.items():
+                        if self._is_better_result(retry_data, all_measures.get(measure_id, {})):
+                            logger.info(f"[PASS 2] Updated {measure_id} with improved result")
+                            all_measures[measure_id] = retry_data
+                        else:
+                            logger.info(f"[PASS 2] Kept original {measure_id} result")
+                
+                logger.info(f"[PASS 2] Completed retry for {len(retry_measures)} measures")
+            else:
+                logger.info("[PASS 2] No retry needed - all measures have sufficient confidence")
+            
+            # Step 5: Calculate overall scores
             assessment_data = self._build_assessment_data(
                 all_measures=all_measures,
                 company_data=company_data
@@ -419,3 +473,76 @@ Assess the following {len(measure_ids)} measures for **{company_name}** using th
             'total_measures_assessed': len(all_measures),
             'assessment_method': 'Batched DeepSeek V3 (5 batches)'
         }
+
+    def _identify_retry_measures(self, all_measures: Dict) -> List[str]:
+        """
+        Identify measures that need retry in Pass 2
+        
+        Criteria for retry:
+        - Score = 0 (no evidence found)
+        - Evidence length < 50 chars (weak evidence)
+        - Score = "Unknown" or "N/A"
+        
+        Returns:
+            List of measure IDs to retry
+        """
+        retry_measures = []
+        
+        for measure_id, data in all_measures.items():
+            score = data.get('score', 0)
+            evidence = data.get('evidence', '')
+            
+            # Check if retry needed
+            should_retry = False
+            
+            # Criterion 1: Score is 0 or Unknown
+            if score == 0 or score in ['Unknown', 'N/A', 'unknown', 'n/a']:
+                should_retry = True
+            
+            # Criterion 2: Weak evidence (< 50 chars)
+            elif isinstance(evidence, str) and len(evidence.strip()) < 50:
+                should_retry = True
+            
+            if should_retry:
+                retry_measures.append(measure_id)
+                logger.debug(f"Retry candidate: {measure_id} (score={score}, evidence_len={len(str(evidence))})")
+        
+        return retry_measures
+    
+    def _is_better_result(self, new_data: Dict, old_data: Dict) -> bool:
+        """
+        Determine if new result is better than old result
+        
+        Better means:
+        - Higher score (0 < 1 < 2 < 3)
+        - Longer/more detailed evidence
+        - More specific rationale
+        
+        Returns:
+            True if new result should replace old result
+        """
+        if not old_data:
+            return True
+        
+        old_score = old_data.get('score', 0)
+        new_score = new_data.get('score', 0)
+        
+        # Convert Unknown/N/A to 0 for comparison
+        if old_score in ['Unknown', 'N/A', 'unknown', 'n/a']:
+            old_score = 0
+        if new_score in ['Unknown', 'N/A', 'unknown', 'n/a']:
+            new_score = 0
+        
+        # Higher score is always better
+        if new_score > old_score:
+            return True
+        
+        # If same score, longer evidence is better
+        if new_score == old_score:
+            old_evidence_len = len(str(old_data.get('evidence', '')))
+            new_evidence_len = len(str(new_data.get('evidence', '')))
+            
+            if new_evidence_len > old_evidence_len * 1.5:  # At least 50% more evidence
+                return True
+        
+        return False
