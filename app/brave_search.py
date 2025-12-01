@@ -417,3 +417,44 @@ def search_documents(company_name: str, isin: str = None, max_iterations: int = 
     """
     searcher = AdaptiveDocumentSearch(max_iterations=max_iterations)
     return searcher.search(company_name, isin)
+
+
+# Backward compatibility wrappers
+def search_company_climate_info(company_name: str, isin: str = None, max_results: int = 150) -> List[Dict]:
+    """
+    Backward compatibility wrapper for search_documents().
+    
+    Args:
+        company_name: Name of the company
+        isin: Optional ISIN code
+        max_results: Maximum number of documents to return
+        
+    Returns:
+        List of document dictionaries
+    """
+    searcher = AdaptiveDocumentSearch(max_documents=max_results)
+    return searcher.search(company_name, isin)
+
+
+def format_search_results(results: List[Dict]) -> str:
+    """
+    Format search results for LLM consumption.
+    
+    Args:
+        results: List of document dictionaries
+        
+    Returns:
+        Formatted string with numbered results
+    """
+    if not results:
+        return "No relevant documents found."
+    
+    formatted = []
+    for i, doc in enumerate(results, 1):
+        title = doc.get('title', 'No title')
+        url = doc.get('url', '')
+        description = doc.get('description', '')
+        
+        formatted.append(f"{i}. {title}\n   URL: {url}\n   {description}\n")
+    
+    return "\n".join(formatted)
