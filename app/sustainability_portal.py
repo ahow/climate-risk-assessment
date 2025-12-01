@@ -5,7 +5,6 @@ Searches sustainability report databases and portals for company reports
 import logging
 import requests
 from typing import List, Dict, Optional
-from serpapi import GoogleSearch
 import os
 
 logger = logging.getLogger(__name__)
@@ -15,7 +14,7 @@ class SustainabilityPortalSearch:
     """Search sustainability report portals and databases"""
     
     def __init__(self):
-        self.serpapi_key = os.getenv('SERPAPI_KEY')
+        self.brave_api_key = os.getenv('BRAVE_API_KEY')
     
     def search_all_portals(self, company_name: str) -> List[Dict]:
         """
@@ -42,21 +41,22 @@ class SustainabilityPortalSearch:
         """Search CDP (Carbon Disclosure Project) database"""
         reports = []
         
-        if not self.serpapi_key:
+        if not self.brave_api_key:
             return reports
         
         try:
             # Search CDP website for company responses
-            search = GoogleSearch({
-                "q": f'site:cdp.net "{company_name}" climate change response',
-                "api_key": self.serpapi_key,
-                "num": 5
-            })
+            query = f'site:cdp.net "{company_name}" climate change response'
+            response = requests.get(
+                'https://api.search.brave.com/res/v1/web/search',
+                params={'q': query, 'count': 5},
+                headers={'X-Subscription-Token': self.brave_api_key}
+            )
             
-            results = search.get_dict()
+            results = response.json()
             
-            for result in results.get("organic_results", []):
-                url = result.get("link", "")
+            for result in results.get("web", {}).get("results", []):
+                url = result.get("url", "")
                 if 'cdp.net' in url.lower():
                     reports.append({
                         'url': url,
@@ -75,21 +75,22 @@ class SustainabilityPortalSearch:
         """Search GRI (Global Reporting Initiative) database"""
         reports = []
         
-        if not self.serpapi_key:
+        if not self.brave_api_key:
             return reports
         
         try:
             # Search GRI database
-            search = GoogleSearch({
-                "q": f'site:database.globalreporting.org "{company_name}" sustainability report',
-                "api_key": self.serpapi_key,
-                "num": 5
-            })
+            query = f'site:database.globalreporting.org "{company_name}" sustainability report'
+            response = requests.get(
+                'https://api.search.brave.com/res/v1/web/search',
+                params={'q': query, 'count': 5},
+                headers={'X-Subscription-Token': self.brave_api_key}
+            )
             
-            results = search.get_dict()
+            results = response.json()
             
-            for result in results.get("organic_results", []):
-                url = result.get("link", "")
+            for result in results.get("web", {}).get("results", []):
+                url = result.get("url", "")
                 if 'globalreporting.org' in url.lower():
                     reports.append({
                         'url': url,
@@ -108,7 +109,7 @@ class SustainabilityPortalSearch:
         """Search company website for sustainability/ESG reports"""
         reports = []
         
-        if not self.serpapi_key:
+        if not self.brave_api_key:
             return reports
         
         try:
@@ -126,16 +127,16 @@ class SustainabilityPortalSearch:
             
             for query in queries:
                 try:
-                    search = GoogleSearch({
-                        "q": query,
-                        "api_key": self.serpapi_key,
-                        "num": 3
-                    })
+                    response = requests.get(
+                        'https://api.search.brave.com/res/v1/web/search',
+                        params={'q': query, 'count': 3},
+                        headers={'X-Subscription-Token': self.brave_api_key}
+                    )
                     
-                    results = search.get_dict()
+                    results = response.json()
                     
-                    for result in results.get("organic_results", []):
-                        url = result.get("link", "")
+                    for result in results.get("web", {}).get("results", []):
+                        url = result.get("url", "")
                         if url.lower().endswith('.pdf'):
                             reports.append({
                                 'url': url,
@@ -157,21 +158,22 @@ class SustainabilityPortalSearch:
         """Search SEC EDGAR for 10-K filings (US companies)"""
         reports = []
         
-        if not self.serpapi_key:
+        if not self.brave_api_key:
             return reports
         
         try:
             # Search SEC EDGAR for 10-K with climate mentions
-            search = GoogleSearch({
-                "q": f'site:sec.gov "{company_name}" 10-K climate risk',
-                "api_key": self.serpapi_key,
-                "num": 3
-            })
+            query = f'site:sec.gov "{company_name}" 10-K climate risk'
+            response = requests.get(
+                'https://api.search.brave.com/res/v1/web/search',
+                params={'q': query, 'count': 3},
+                headers={'X-Subscription-Token': self.brave_api_key}
+            )
             
-            results = search.get_dict()
+            results = response.json()
             
-            for result in results.get("organic_results", []):
-                url = result.get("link", "")
+            for result in results.get("web", {}).get("results", []):
+                url = result.get("url", "")
                 if 'sec.gov' in url.lower() and '10-k' in result.get("title", "").lower():
                     reports.append({
                         'url': url,
