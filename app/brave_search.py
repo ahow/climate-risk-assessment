@@ -3,13 +3,15 @@ Brave Search API Integration with Adaptive Exhaustive Search
 
 Replaces SerpAPI with Brave Search API for cost-effective, comprehensive document discovery.
 Implements adaptive search that continues until document exhaustion is reached.
+Uses ISIN to discover company name variations for more accurate results.
 """
 
 import os
 import logging
 import requests
 import time
-from typing import List, Dict, Set
+import re
+from typing import List, Dict, Set, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ GENERIC_KEYWORDS = {
 class AdaptiveDocumentSearch:
     """
     Adaptive exhaustive search that continues until no new documents are found.
+    Uses ISIN to discover company name variations for accurate filtering.
     """
     
     def __init__(self, brave_api_key: str = None, max_iterations: int = 10, max_documents: int = 150):
@@ -42,6 +45,7 @@ class AdaptiveDocumentSearch:
         self.max_iterations = max_iterations
         self.max_documents = max_documents
         self.search_count = 0
+        self.company_name_variations = set()
         
     def search(self, company_name: str, isin: str = None, verbose: bool = True) -> List[Dict]:
         """
@@ -49,7 +53,7 @@ class AdaptiveDocumentSearch:
         
         Args:
             company_name: Name of the company
-            isin: Optional ISIN code
+            isin: Optional ISIN code (highly recommended for accuracy)
             verbose: Whether to log progress
             
         Returns:
@@ -59,7 +63,14 @@ class AdaptiveDocumentSearch:
         iteration = 0
         consecutive_no_new_docs = 0
         
-        logger.info(f"Starting adaptive search for {company_name}")
+        # Discover company name variations using ISIN
+        if isin:
+            self._discover_name_variations(company_name, isin)
+        else:
+            # Fallback: extract core name manually
+            self.company_name_variations = self._extract_core_names(company_name)
+        
+        logger.info(f"Starting adaptive search for {company_name} (variations: {self.company_name_variations})")
         
         while iteration < self.max_iterations and len(all_documents) < self.max_documents:
             iteration += 1
@@ -68,7 +79,7 @@ class AdaptiveDocumentSearch:
             queries = self._generate_queries(company_name, isin, iteration)
             
             # Search with these queries
-            new_docs = self._search_iteration(queries, company_name)
+            new_docs = self._search_iteration(queries, company_name, isin)
             
             # Count new documents
             new_urls = set(new_docs.keys())
@@ -103,6 +114,92 @@ class AdaptiveDocumentSearch:
         
         return list(all_documents.values())
     
+    def _discover_name_variations(self, company_name: str, isin: str):
+        """
+        Use ISIN to discover company name variations from authoritative sources.
+        """
+        logger.info(f"Discovering name variations for {company_name} using ISIN {isin}")
+        
+        # Start with provided name
+        self.company_name_variations = self._extract_core_names(company_name)
+        
+        # Search for ISIN to find official company names
+        try:
+            results = self._brave_search(f'{isin} company name', count=10)
+            
+            for result in results[:5]:  # Check first 5 results
+                title = result.get('title', '')
+                description = result.get('description', '')
+                
+                # Extract potential company names from title/description
+                # Look for patterns like "Company Name (ISIN: ...)" or "ISIN - Company Name"
+                combined = title + ' ' + description
+                
+                # Extract names near ISIN
+                isin_pattern = rf'([A-Z][a-zA-Z\s&\.]+)\s*[\(\-]?\s*{isin}'
+                matches = re.findall(isin_pattern, combined)
+                
+                for match in matches:
+                    variations = self._extract_core_names(match.strip())
+                    self.company_name_variations.update(variations)
+            
+            logger.info(f"Discovered variations: {self.company_name_variations}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to discover name variations: {e}")
+            # Fallback to manual extraction
+            self.company_name_variations = self._extract_core_names(company_name)
+    
+    def _extract_core_names(self, company_name: str) -> Set[str]:
+        """
+        Extract core company name and common variations.
+        
+        Examples:
+        - "Cisco Systems Inc." -> {"cisco", "cisco systems"}
+        - "Volkswagen AG" -> {"volkswagen", "vw"}
+        - "Apple Inc." -> {"apple"}
+        """
+        variations = set()
+        
+        # Remove common suffixes
+        suffixes = ['inc', 'incorporated', 'corp', 'corporation', 'ltd', 'limited', 
+                   'ag', 'plc', 'sa', 'nv', 'gmbh', 'co', 'company', 'group']
+        
+        name_lower = company_name.lower()
+        
+        # Remove punctuation
+        name_clean = re.sub(r'[^\w\s]', ' ', name_lower)
+        
+        # Split into words
+        words = name_clean.split()
+        
+        # Filter out suffixes
+        core_words = [w for w in words if w not in suffixes and len(w) > 2]
+        
+        if not core_words:
+            # Fallback to original name
+            variations.add(name_lower.strip())
+            return variations
+        
+        # Add first significant word (e.g., "cisco" from "Cisco Systems")
+        variations.add(core_words[0])
+        
+        # Add first two words if available (e.g., "cisco systems")
+        if len(core_words) >= 2:
+            variations.add(f"{core_words[0]} {core_words[1]}")
+        
+        # Add full core name
+        variations.add(' '.join(core_words))
+        
+        # Add common abbreviations for multi-word names
+        if len(core_words) >= 2:
+            # e.g., "Volkswagen" -> "VW"
+            abbrev = ''.join([w[0] for w in core_words[:3]])  # First 3 words
+            if len(abbrev) >= 2:
+                variations.add(abbrev.lower())
+        
+        return variations
+    
     def _generate_queries(self, company_name: str, isin: str, iteration_num: int) -> List[str]:
         """
         Generate diverse queries for each iteration.
@@ -110,59 +207,88 @@ class AdaptiveDocumentSearch:
         # Extract company domain for site-specific searches
         domain = self._extract_domain(company_name)
         
+        # Use primary name variation for queries
+        primary_name = list(self.company_name_variations)[0] if self.company_name_variations else company_name
+        
         # Define query strategies by iteration
         all_queries = [
-            # Iteration 1: Core climate risk
+            # Iteration 1: Core climate risk with ISIN
             [
-                f'"{company_name}" climate physical risk',
-                f'"{company_name}" TCFD physical risk',
-                f'"{company_name}" climate adaptation resilience'
+                f'{isin} climate physical risk' if isin else f'"{company_name}" climate physical risk',
+                f'{isin} TCFD disclosure' if isin else f'"{company_name}" TCFD physical risk',
+                f'"{primary_name}" climate adaptation resilience'
             ],
             # Iteration 2: Specific hazards
             [
-                f'"{company_name}" flood risk extreme weather',
-                f'"{company_name}" drought water stress',
-                f'"{company_name}" extreme heat climate'
+                f'"{primary_name}" flood risk extreme weather',
+                f'"{primary_name}" drought water stress',
+                f'"{primary_name}" extreme heat climate'
             ],
             # Iteration 3: Site-specific
             [
-                f'site:{domain} climate risk' if domain else f'{company_name} climate risk report',
-                f'site:{domain} sustainability report' if domain else f'{company_name} sustainability disclosure',
-                f'site:{domain} ESG climate' if domain else f'{company_name} ESG climate disclosure'
+                f'site:{domain} climate risk' if domain else f'"{primary_name}" climate risk report',
+                f'site:{domain} sustainability report' if domain else f'"{primary_name}" sustainability disclosure',
+                f'site:{domain} ESG climate' if domain else f'"{primary_name}" ESG climate disclosure'
             ],
             # Iteration 4: Regulatory & frameworks
             [
-                f'"{company_name}" CDP climate disclosure',
-                f'"{company_name}" EU Taxonomy physical risk',
-                f'{isin} climate risk assessment' if isin else f'{company_name} climate scenario analysis'
+                f'"{primary_name}" CDP climate disclosure',
+                f'"{primary_name}" EU Taxonomy physical risk',
+                f'{isin} climate risk assessment' if isin else f'"{primary_name}" climate scenario analysis'
             ],
             # Iteration 5: Business impact
             [
-                f'"{company_name}" business continuity climate',
-                f'"{company_name}" supply chain climate risk',
-                f'"{company_name}" asset resilience climate'
+                f'"{primary_name}" business continuity climate',
+                f'"{primary_name}" supply chain climate risk',
+                f'"{primary_name}" asset resilience climate'
             ],
             # Iteration 6: Reporting
             [
-                f'"{company_name}" annual report climate risk',
-                f'"{company_name}" 10-K climate physical risk',
-                f'"{company_name}" integrated report climate'
+                f'"{primary_name}" annual report climate risk',
+                f'"{primary_name}" 10-K climate physical risk',
+                f'"{primary_name}" integrated report climate'
             ],
-            # Iteration 7+: Long-tail
+            # Iteration 7: Geographic & sector
             [
-                f'"{company_name}" climate change impact assessment',
-                f'"{company_name}" environmental risk management',
-                f'"{company_name}" climate vulnerability'
+                f'"{primary_name}" facilities climate vulnerability',
+                f'"{primary_name}" operations climate exposure',
+                f'"{primary_name}" infrastructure climate risk'
+            ],
+            # Iteration 8: Investor & analyst
+            [
+                f'"{primary_name}" investor presentation climate',
+                f'"{primary_name}" analyst report climate risk',
+                f'"{primary_name}" ESG rating climate'
+            ],
+            # Iteration 9: Deep dive with variations
+            [
+                f'"{var}" climate risk' for var in list(self.company_name_variations)[:3]
+            ],
+            # Iteration 10: Final sweep
+            [
+                f'{isin} sustainability' if isin else f'"{primary_name}" sustainability',
+                f'{isin} environmental disclosure' if isin else f'"{primary_name}" environmental disclosure',
+                f'"{primary_name}" climate change strategy'
             ]
         ]
         
-        # Get queries for this iteration (cycle through if needed)
-        idx = (iteration_num - 1) % len(all_queries)
-        return all_queries[idx]
+        # Get queries for this iteration (cycle if beyond defined iterations)
+        iteration_idx = (iteration_num - 1) % len(all_queries)
+        queries = all_queries[iteration_idx]
+        
+        # Flatten list (in case of nested lists)
+        flat_queries = []
+        for q in queries:
+            if isinstance(q, list):
+                flat_queries.extend(q)
+            else:
+                flat_queries.append(q)
+        
+        return flat_queries
     
-    def _search_iteration(self, queries: List[str], company_name: str) -> Dict[str, Dict]:
+    def _search_iteration(self, queries: List[str], company_name: str, isin: str = None) -> Dict[str, Dict]:
         """
-        Execute multiple queries and return deduplicated, filtered results.
+        Execute searches for all queries in this iteration.
         """
         all_results = {}
         
@@ -172,14 +298,13 @@ class AdaptiveDocumentSearch:
                 
                 for result in results:
                     url = result['url']
+                    title = result.get('title', '')
+                    snippet = result.get('description', '')
                     
-                    # Apply filters
-                    if self._should_filter(url, result.get('title', ''), 
-                                          result.get('description', ''), company_name):
-                        continue
-                    
-                    if url not in all_results:
-                        all_results[url] = result
+                    # Filter out irrelevant results
+                    if not self._should_filter(url, title, snippet, company_name, isin):
+                        if url not in all_results:
+                            all_results[url] = result
                 
                 self.search_count += 1
                 time.sleep(0.1)  # Small delay to be respectful
@@ -224,9 +349,10 @@ class AdaptiveDocumentSearch:
         
         return results
     
-    def _should_filter(self, url: str, title: str, snippet: str, company_name: str) -> bool:
+    def _should_filter(self, url: str, title: str, snippet: str, company_name: str, isin: str = None) -> bool:
         """
         Determine if a result should be filtered out.
+        Uses discovered name variations and ISIN for accurate matching.
         """
         # Filter out generic domains
         if any(domain in url.lower() for domain in GENERIC_DOMAINS):
@@ -239,113 +365,55 @@ class AdaptiveDocumentSearch:
             logger.debug(f"Filtered generic content: {title}")
             return True
         
-        # Check if company name appears in title or snippet
-        # Use first significant word of company name for flexibility
-        # e.g., "Cisco Systems" -> check for "cisco"
-        company_keywords = [word.lower() for word in company_name.split() 
-                           if len(word) > 3 and word.lower() not in {'inc', 'ltd', 'corp', 'corporation', 'company', 'group'}]
+        combined_text = (title + ' ' + snippet).lower()
         
-        if not company_keywords:
-            # Fallback to full name if no significant keywords
-            company_keywords = [company_name.lower()]
+        # Priority 1: Check for ISIN (most reliable)
+        if isin and isin.lower() in combined_text:
+            logger.debug(f"Accepted (ISIN match): {title}")
+            return False
         
-        combined_text = (title + snippet).lower()
-        if not any(keyword in combined_text for keyword in company_keywords):
-            logger.debug(f"Company keywords {company_keywords} not in result: {title}")
+        # Priority 2: Check for any discovered name variation
+        if self.company_name_variations:
+            for variation in self.company_name_variations:
+                if variation in combined_text:
+                    # Additional check: ensure climate/sustainability context
+                    climate_keywords = ['climate', 'sustainability', 'esg', 'environmental', 
+                                       'tcfd', 'cdp', 'carbon', 'emissions', 'risk']
+                    if any(kw in combined_text for kw in climate_keywords):
+                        logger.debug(f"Accepted (variation '{variation}' + climate context): {title}")
+                        return False
+            
+            # Name variation found but no climate context
+            logger.debug(f"Filtered (name found but no climate context): {title}")
             return True
         
-        return False
+        # No match found
+        logger.debug(f"Filtered (no company match): {title}")
+        return True
     
     def _extract_domain(self, company_name: str) -> str:
         """
-        Extract likely domain from company name.
+        Extract likely company domain from name.
         """
-        # Simple heuristic - convert company name to domain
-        domain = company_name.lower()
-        domain = domain.replace(' ', '')
-        domain = domain.replace('inc', '').replace('ltd', '').replace('corp', '')
-        domain = domain.replace('.', '').replace(',', '')
-        
-        # Common patterns (can be expanded)
-        domain_map = {
-            'cisco': 'cisco.com',
-            'apple': 'apple.com',
-            'microsoft': 'microsoft.com',
-            'google': 'google.com',
-            'amazon': 'amazon.com',
-            'facebook': 'facebook.com',
-            'meta': 'meta.com',
-            'tesla': 'tesla.com',
-            'nvidia': 'nvidia.com',
-            'intel': 'intel.com',
-            'walmart': 'walmart.com',
-            'visa': 'visa.com'
-        }
-        
-        for key, value in domain_map.items():
-            if key in domain:
-                return value
-        
-        # Return None if can't determine
-        return None
+        # Simple heuristic: take first word, lowercase, add .com
+        words = company_name.split()
+        if words:
+            core = words[0].lower().replace('.', '').replace(',', '')
+            return f"{core}.com"
+        return ""
 
 
-def search_company_climate_info(company_name: str, isin: str = None, max_results: int = 150) -> List[Dict]:
+def search_documents(company_name: str, isin: str = None, max_iterations: int = 10) -> List[Dict]:
     """
-    Search for company-specific climate risk information using Brave Search with adaptive exhaustive search.
-    
-    This is the main entry point that replaces the SerpAPI search function.
+    Convenience function to search for company climate documents.
     
     Args:
         company_name: Name of the company
-        isin: Optional ISIN code
-        max_results: Maximum number of results to return (default 150)
-    
-    Returns:
-        List of search results with title, url, snippet (description)
-    """
-    try:
-        searcher = AdaptiveDocumentSearch(max_documents=max_results)
-        documents = searcher.search(company_name, isin, verbose=True)
-        
-        # Convert to format expected by downstream code
-        results = []
-        for doc in documents:
-            results.append({
-                'title': doc.get('title', ''),
-                'url': doc.get('url', ''),
-                'snippet': doc.get('description', ''),  # Map 'description' to 'snippet'
-                'query': doc.get('query', '')
-            })
-        
-        logger.info(f"Found {len(results)} company-specific results for {company_name}")
-        return results
-        
-    except Exception as e:
-        logger.error(f"Adaptive search failed for {company_name}: {e}")
-        return []
-
-
-def format_search_results(results: List[Dict]) -> str:
-    """
-    Format search results into a structured string for AI processing.
-    
-    Args:
-        results: List of search result dictionaries
+        isin: Optional ISIN code (recommended)
+        max_iterations: Maximum search iterations
         
     Returns:
-        Formatted string with numbered sources
+        List of document dictionaries
     """
-    if not results:
-        return "No web search results found."
-    
-    formatted = "WEB SEARCH RESULTS:\n\n"
-    
-    for i, result in enumerate(results, 1):
-        formatted += f"[Source {i}]\n"
-        formatted += f"Title: {result.get('title', 'N/A')}\n"
-        formatted += f"URL: {result.get('url', 'N/A')}\n"
-        formatted += f"Content: {result.get('snippet', 'N/A')}\n"
-        formatted += "\n"
-    
-    return formatted
+    searcher = AdaptiveDocumentSearch(max_iterations=max_iterations)
+    return searcher.search(company_name, isin)
