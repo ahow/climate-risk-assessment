@@ -13,7 +13,7 @@ from app.database import Database
 from app.document_extraction_v3 import extract_documents_for_company
 from app.document_extraction_simple import format_documents_for_assessment
 from app.sustainability_portal import get_priority_documents
-from app.document_ranker import DocumentRanker
+# from app.document_ranker import DocumentRanker  # No longer needed - using all docs without ranking
 
 logger = logging.getLogger(__name__)
 
@@ -144,20 +144,19 @@ class BatchedAssessmentEngine:
             all_search_results = search_company_climate_info(company_name, isin=isin, max_results=150)
             logger.info(f"[CHECKPOINT 2] Brave adaptive search found {len(all_search_results)} unique documents")
             
-            # 2b: Rank documents by relevance and select top 50
-            logger.info("[CHECKPOINT 3] Ranking documents by relevance...")
-            ranker = DocumentRanker(verbose=True)
-            top_documents = ranker.rank_documents(all_search_results, top_n=50)
-            logger.info(f"[CHECKPOINT 4] Selected top {len(top_documents)} most relevant documents")
+            # 2b: Sort documents by URL for deterministic ordering
+            logger.info("[CHECKPOINT 3] Sorting documents by URL for deterministic ordering...")
+            # Sort by URL to ensure consistent ordering across runs
+            sorted_documents = sorted(all_search_results, key=lambda x: x.get('url', ''))
+            logger.info(f"[CHECKPOINT 4] Using all {len(sorted_documents)} documents (no ranking/filtering)")
             
-            # 2c: Format top documents for assessment
-            logger.info("[CHECKPOINT 5] Formatting top documents for LLM...")
-            search_context = self._format_search_with_urls(top_documents)
-            logger.info(f"[CHECKPOINT 6] PASS 1: Using {len(top_documents)} top-ranked documents for initial assessment")
+            # 2c: Format all documents for assessment
+            logger.info("[CHECKPOINT 5] Formatting all documents for LLM...")
+            search_context = self._format_search_with_urls(sorted_documents)
+            logger.info(f"[CHECKPOINT 6] Using {len(sorted_documents)} documents for assessment (deterministic)")
             
-            # Store all documents for potential Pass 2
-            self._all_documents = all_search_results
-            self._ranker = ranker
+            # No two-pass retry - use all documents in single pass
+            self._all_documents = sorted_documents
             
             # Step 3: Process each batch
             all_measures = {}
@@ -181,59 +180,7 @@ class BatchedAssessmentEngine:
                 
                 logger.info(f"✓ Batch {batch_num}/5 completed ({len(batch_measures)} measures)")
             
-            # Step 4: Pass 2 - Retry low-confidence measures
-            logger.info("[CHECKPOINT 7] Analyzing Pass 1 results for retry candidates...")
-            retry_measures = self._identify_retry_measures(all_measures)
-            
-            if retry_measures:
-                logger.info(f"[PASS 2] Retrying {len(retry_measures)} low-confidence measures with targeted documents")
-                
-                # Group retry measures by category
-                retry_by_category = {}
-                for measure_id in retry_measures:
-                    category = self._ranker.get_measure_category(measure_id)
-                    if category not in retry_by_category:
-                        retry_by_category[category] = []
-                    retry_by_category[category].append(measure_id)
-                
-                # Process each category
-                for category, measure_ids in retry_by_category.items():
-                    logger.info(f"[PASS 2] Processing {len(measure_ids)} {category} measures")
-                    
-                    # Get targeted documents for this category
-                    targeted_docs = self._ranker.filter_for_measures(
-                        self._all_documents, 
-                        category, 
-                        top_n=20
-                    )
-                    targeted_context = self._format_search_with_urls(targeted_docs)
-                    
-                    # Build retry prompt
-                    retry_prompt = self._build_batch_prompt(
-                        company_data=company_data,
-                        processprompt=processprompt_content,
-                        web_search_results=targeted_context,
-                        measure_ids=measure_ids,
-                        batch_num=99  # Special batch number for retry
-                    )
-                    
-                    # Call LLM for retry
-                    retry_response = self.call_deepseek(retry_prompt, max_tokens=8000)
-                    retry_results = self._parse_batch_response(retry_response, measure_ids)
-                    
-                    # Update measures with retry results (only if improved)
-                    for measure_id, retry_data in retry_results.items():
-                        if self._is_better_result(retry_data, all_measures.get(measure_id, {})):
-                            logger.info(f"[PASS 2] Updated {measure_id} with improved result")
-                            all_measures[measure_id] = retry_data
-                        else:
-                            logger.info(f"[PASS 2] Kept original {measure_id} result")
-                
-                logger.info(f"[PASS 2] Completed retry for {len(retry_measures)} measures")
-            else:
-                logger.info("[PASS 2] No retry needed - all measures have sufficient confidence")
-            
-            # Step 5: Calculate overall scores
+            # Step 4: Calculate overall scores (no Pass 2 retry - using all docs in single pass)
             assessment_data = self._build_assessment_data(
                 all_measures=all_measures,
                 company_data=company_data
